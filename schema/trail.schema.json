@@ -1,0 +1,101 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "trail.schema.json",
+  "title": "Trail",
+  "description": "Schema for trail.json — the data contract for a Trailmaker trail",
+  "type": "object",
+  "required": ["meta", "chapters", "insights", "branches"],
+  "additionalProperties": false,
+  "properties": {
+    "meta": {
+      "type": "object",
+      "required": ["title", "subtitle", "stats", "repo", "icon"],
+      "additionalProperties": false,
+      "properties": {
+        "title":    { "type": "string", "minLength": 1 },
+        "subtitle": { "type": "string", "minLength": 1 },
+        "stats":    { "type": "string", "minLength": 1 },
+        "repo":     { "type": "string", "format": "uri" },
+        "icon":     { "type": "string", "minLength": 1 }
+      }
+    },
+    "chapters": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["id", "title", "desc"],
+        "additionalProperties": false,
+        "properties": {
+          "id":    { "type": "string", "pattern": "^[a-z0-9-]+$" },
+          "title": { "type": "string", "minLength": 1 },
+          "desc":  { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "insights": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["ch", "t", "d", "f", "l"],
+        "additionalProperties": false,
+        "properties": {
+          "ch": { "type": "integer", "minimum": 0 },
+          "t":  { "type": "string", "minLength": 1 },
+          "d":  { "type": "string", "minLength": 1 },
+          "f":  { "type": "string", "minLength": 1 },
+          "l":  { "type": "string", "minLength": 1 },
+          "v":  { "type": "string" }
+        }
+      }
+    },
+    "branches": {
+      "type": "object",
+      "patternProperties": {
+        "^[0-9]+$": {
+          "type": "object",
+          "required": ["trail", "puzzle"],
+          "additionalProperties": false,
+          "properties": {
+            "trail": {
+              "type": "array",
+              "minItems": 3,
+              "maxItems": 3,
+              "items": {
+                "type": "object",
+                "required": ["title", "level", "desc", "core"],
+                "additionalProperties": false,
+                "properties": {
+                  "title": { "type": "string", "minLength": 1 },
+                  "level": {
+                    "type": "string",
+                    "enum": ["Sourced Tech", "How It Works", "Core Tech"]
+                  },
+                  "desc": { "type": "string", "minLength": 1 },
+                  "core": { "type": "string", "minLength": 1 }
+                }
+              }
+            },
+            "puzzle": {
+              "type": "object",
+              "required": ["q", "opts", "ans"],
+              "additionalProperties": false,
+              "properties": {
+                "q":    { "type": "string", "minLength": 1 },
+                "opts": {
+                  "type": "array",
+                  "minItems": 4,
+                  "maxItems": 4,
+                  "items": { "type": "string", "minLength": 1 }
+                },
+                "ans":  { "type": "integer", "minimum": 0, "maximum": 3 }
+              }
+            }
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

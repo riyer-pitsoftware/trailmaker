@@ -1,0 +1,1157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Trailmaker</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=VT323:ital,wght@0,400;1,400&display=swap" rel="stylesheet">
+<style>
+/* ── Reset ── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+/* ── CRT Variables ── */
+:root {
+  --green:   #33ff57;
+  --green2:  #00cc33;
+  --green3:  #005510;
+  --amber:   #ffb000;
+  --dim:     #1a1a1a;
+  --bg:      #080808;
+  --card-bg: #0d1a0d;
+  --border:  #1f4d1f;
+  --text:    #c8ffc8;
+  --muted:   #5a8a5a;
+  --danger:  #ff4444;
+  --correct: #44ff44;
+  --font-hd: 'Press Start 2P', monospace;
+  --font-bd: 'VT323', monospace;
+}
+
+/* ── Base ── */
+html, body { height: 100%; background: var(--bg); color: var(--text); overflow: hidden; }
+body { font-family: var(--font-bd); font-size: 1.15rem; }
+
+/* ── CRT Screen wrapper ── */
+#screen {
+  position: relative;
+  width: 100vw; height: 100vh;
+  overflow: hidden;
+}
+/* Scanlines */
+#screen::after {
+  content: '';
+  pointer-events: none;
+  position: fixed; inset: 0; z-index: 9999;
+  background: repeating-linear-gradient(
+    to bottom,
+    transparent 0px, transparent 2px,
+    rgba(0,0,0,0.18) 2px, rgba(0,0,0,0.18) 4px
+  );
+}
+/* CRT flicker */
+@keyframes flicker { 0%,100%{opacity:1} 96%{opacity:.98} 97%{opacity:.93} 98%{opacity:.98} }
+#screen { animation: flicker 6s infinite; }
+
+/* ── Loading ── */
+#loading {
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  height: 100vh; gap: 1.5rem; text-align: center; padding: 2rem;
+}
+#loading h1 { font-family: var(--font-hd); font-size: clamp(0.6rem, 2vw, 1rem); color: var(--green); line-height: 2; }
+#loading p  { color: var(--muted); font-size: 1.3rem; }
+.blink { animation: blink 1s step-end infinite; }
+@keyframes blink { 50% { opacity: 0; } }
+
+/* ── Main layout ── */
+#app { display: none; flex-direction: column; height: 100vh; }
+
+/* Trail map bar */
+#map-bar {
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--border);
+  background: var(--dim);
+  overflow: hidden;
+  position: relative;
+  height: 80px;
+}
+#map-scroll {
+  display: flex; align-items: center;
+  height: 100%;
+  overflow-x: auto; overflow-y: hidden;
+  scrollbar-width: none;
+  padding: 0 48px;
+  scroll-behavior: smooth;
+}
+#map-scroll::-webkit-scrollbar { display: none; }
+#map-inner {
+  display: flex; align-items: center;
+  gap: 0; flex-shrink: 0;
+  height: 100%;
+  position: relative;
+}
+
+/* Map segments and dots */
+.map-seg { width: 22px; height: 2px; background: var(--green3); flex-shrink: 0; }
+.map-seg.visited { background: var(--green2); }
+.map-dot {
+  width: 12px; height: 12px; border-radius: 50%;
+  background: var(--green3); border: 2px solid var(--green3);
+  flex-shrink: 0; cursor: pointer; transition: all .15s;
+  position: relative;
+}
+.map-dot:hover { transform: scale(1.4); border-color: var(--green); }
+.map-dot.visited { background: var(--green2); border-color: var(--green2); }
+.map-dot.current { background: var(--green); border-color: var(--green); box-shadow: 0 0 8px var(--green); }
+.map-dot.branched { border-color: var(--amber); }
+.map-dot.branched.visited { background: var(--amber); border-color: var(--amber); }
+
+/* Chapter markers */
+.map-chapter {
+  display: flex; flex-direction: column; align-items: center; flex-shrink: 0;
+  position: relative; padding: 0 8px;
+}
+.map-chapter-flag {
+  font-family: var(--font-hd); font-size: 0.35rem;
+  color: var(--amber); white-space: nowrap;
+  max-width: 80px; overflow: hidden; text-overflow: ellipsis;
+  margin-bottom: 4px;
+}
+.map-chapter-post { width: 2px; height: 18px; background: var(--amber); }
+
+/* Wagon */
+#wagon {
+  position: absolute; top: 50%; transform: translateY(-50%);
+  transition: left .3s ease; pointer-events: none;
+  font-size: 1.4rem; line-height: 1;
+  filter: drop-shadow(0 0 4px var(--green));
+  z-index: 10;
+}
+
+/* ── Progress bar ── */
+#progress-bar {
+  height: 2px; background: var(--green3);
+  flex-shrink: 0;
+}
+#progress-fill { height: 100%; background: var(--green2); transition: width .3s; }
+
+/* ── Main content ── */
+#main-content {
+  flex: 1; overflow: hidden;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  padding: 1.5rem;
+  position: relative;
+}
+
+/* ── Insight card ── */
+#insight-card {
+  width: 100%; max-width: 760px;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  padding: 1.5rem 2rem;
+  display: flex; flex-direction: column; gap: 1rem;
+  position: relative;
+  max-height: 60vh; overflow-y: auto;
+  scrollbar-width: thin; scrollbar-color: var(--border) transparent;
+}
+#insight-card::before {
+  content: '';
+  position: absolute; top: 0; left: 0; right: 0;
+  height: 3px; background: var(--green2);
+}
+
+.card-meta {
+  display: flex; align-items: center; gap: 1rem;
+  font-size: 0.9rem; color: var(--muted);
+}
+.card-chapter { color: var(--amber); font-family: var(--font-hd); font-size: 0.45rem; }
+.card-badge {
+  background: var(--green3); color: var(--green);
+  border: 1px solid var(--green2); padding: 0 .5rem;
+  font-size: 0.9rem;
+}
+.card-index { margin-left: auto; }
+
+.card-title { font-family: var(--font-hd); font-size: clamp(0.5rem, 1.5vw, 0.75rem); color: var(--green); line-height: 2; }
+.card-desc { font-size: 1.2rem; color: var(--text); line-height: 1.5; }
+.card-learn { font-size: 1.1rem; color: var(--muted); line-height: 1.5; border-left: 2px solid var(--green3); padding-left: 1rem; }
+.card-learn strong { color: var(--green2); }
+
+.card-file a {
+  color: var(--green2); text-decoration: none; font-size: 1rem;
+  font-family: monospace; word-break: break-all;
+}
+.card-file a:hover { color: var(--green); text-decoration: underline; }
+.card-file-icon { margin-right: .4rem; }
+
+.card-branch-btn {
+  align-self: flex-start; margin-top: .5rem;
+  background: transparent; border: 1px solid var(--amber);
+  color: var(--amber); font-family: var(--font-hd); font-size: 0.4rem;
+  padding: .5rem 1rem; cursor: pointer; line-height: 2;
+  transition: all .15s;
+}
+.card-branch-btn:hover { background: var(--amber); color: var(--bg); }
+.card-branch-done { border-color: var(--green2); color: var(--green2); }
+.card-branch-done:hover { background: var(--green2); color: var(--bg); }
+
+/* ── Nav ── */
+#nav {
+  display: flex; align-items: center; justify-content: space-between;
+  width: 100%; max-width: 760px; margin-top: 1rem;
+  gap: 1rem;
+}
+.nav-btn {
+  background: transparent; border: 1px solid var(--border);
+  color: var(--muted); font-family: var(--font-hd); font-size: 0.4rem;
+  padding: .6rem 1.2rem; cursor: pointer; line-height: 2;
+  transition: all .15s; white-space: nowrap;
+}
+.nav-btn:hover:not(:disabled) { border-color: var(--green); color: var(--green); }
+.nav-btn:disabled { opacity: .3; cursor: default; }
+#nav-pos { color: var(--muted); font-size: 1rem; text-align: center; }
+
+/* ── Chapter interstitial ── */
+#chapter-interstitial {
+  display: none; position: fixed; inset: 0; z-index: 100;
+  background: var(--bg); align-items: center; justify-content: center;
+  flex-direction: column; gap: 2rem; text-align: center; padding: 2rem;
+}
+#chapter-interstitial.active { display: flex; }
+.ch-label { font-family: var(--font-hd); font-size: 0.45rem; color: var(--amber); }
+.ch-num { font-family: var(--font-hd); font-size: clamp(0.6rem, 3vw, 1.2rem); color: var(--green); line-height: 2; }
+.ch-title { font-family: var(--font-hd); font-size: clamp(0.5rem, 2vw, 0.85rem); color: var(--text); line-height: 2; margin-top: .5rem; }
+.ch-desc { font-size: 1.3rem; color: var(--muted); max-width: 500px; }
+.ch-divider { width: 200px; height: 2px; background: var(--green2); }
+.ch-continue {
+  background: transparent; border: 2px solid var(--green);
+  color: var(--green); font-family: var(--font-hd); font-size: 0.5rem;
+  padding: .8rem 2rem; cursor: pointer; line-height: 2; margin-top: 1rem;
+  transition: all .15s;
+}
+.ch-continue:hover { background: var(--green); color: var(--bg); }
+
+/* ── Branch overlay ── */
+#branch-overlay {
+  display: none; position: fixed; inset: 0; z-index: 200;
+  background: #050d05;
+  flex-direction: column;
+}
+#branch-overlay.active { display: flex; }
+
+#branch-header {
+  display: flex; align-items: center; gap: 1rem;
+  padding: 1rem 1.5rem; border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+#branch-title { font-family: var(--font-hd); font-size: 0.45rem; color: var(--amber); line-height: 2; flex: 1; }
+#branch-close {
+  background: transparent; border: 1px solid var(--border);
+  color: var(--muted); font-family: var(--font-hd); font-size: 0.4rem;
+  padding: .4rem .8rem; cursor: pointer; line-height: 2;
+}
+#branch-close:hover { border-color: var(--danger); color: var(--danger); }
+
+/* Branch mini-map */
+#branch-minimap {
+  display: flex; align-items: center; justify-content: center;
+  gap: 0; padding: 1rem 2rem; flex-shrink: 0;
+}
+.bm-node {
+  display: flex; flex-direction: column; align-items: center; gap: .4rem;
+}
+.bm-dot {
+  width: 14px; height: 14px; border-radius: 50%;
+  background: var(--green3); border: 2px solid var(--green3);
+  transition: all .2s;
+}
+.bm-dot.active { background: var(--amber); border-color: var(--amber); box-shadow: 0 0 8px var(--amber); }
+.bm-dot.done   { background: var(--green2); border-color: var(--green2); }
+.bm-label { font-size: 0.85rem; color: var(--muted); text-align: center; max-width: 80px; }
+.bm-seg  { width: 40px; height: 2px; background: var(--green3); margin-top: -7px; }
+.bm-seg.done { background: var(--green2); }
+
+/* Branch content */
+#branch-content {
+  flex: 1; overflow-y: auto; overflow-x: hidden;
+  display: flex; align-items: center; justify-content: center;
+  padding: 1.5rem;
+}
+#branch-card {
+  width: 100%; max-width: 680px;
+  background: var(--card-bg); border: 1px solid var(--border);
+  padding: 1.5rem 2rem; display: flex; flex-direction: column; gap: 1rem;
+}
+.branch-level-badge {
+  font-family: var(--font-hd); font-size: 0.38rem; color: var(--amber);
+  border: 1px solid var(--amber); padding: .3rem .7rem; align-self: flex-start;
+}
+.branch-card-title { font-family: var(--font-hd); font-size: clamp(0.5rem, 1.5vw, 0.7rem); color: var(--green); line-height: 2; }
+.branch-card-desc  { font-size: 1.2rem; color: var(--text); line-height: 1.5; }
+.branch-card-core  { font-size: 1.1rem; color: var(--muted); border-left: 2px solid var(--amber); padding-left: 1rem; line-height: 1.5; }
+
+#branch-nav {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 1rem 1.5rem; border-top: 1px solid var(--border); flex-shrink: 0;
+}
+.branch-nav-btn {
+  background: transparent; border: 1px solid var(--border);
+  color: var(--muted); font-family: var(--font-hd); font-size: 0.4rem;
+  padding: .5rem 1rem; cursor: pointer; line-height: 2; transition: all .15s;
+}
+.branch-nav-btn:hover:not(:disabled) { border-color: var(--amber); color: var(--amber); }
+.branch-nav-btn:disabled { opacity: .3; cursor: default; }
+#branch-nav-pos { color: var(--muted); font-size: 1rem; }
+
+/* ── Puzzle ── */
+#puzzle-overlay {
+  display: none; position: fixed; inset: 0; z-index: 300;
+  background: rgba(5,13,5,.97);
+  flex-direction: column; align-items: center; justify-content: center;
+  padding: 2rem; gap: 1.5rem;
+}
+#puzzle-overlay.active { display: flex; }
+#puzzle-label { font-family: var(--font-hd); font-size: 0.45rem; color: var(--amber); }
+#puzzle-q {
+  font-size: 1.4rem; color: var(--text); max-width: 600px;
+  text-align: center; line-height: 1.6;
+}
+#puzzle-opts { display: flex; flex-direction: column; gap: .7rem; width: 100%; max-width: 560px; }
+.puzzle-opt {
+  background: transparent; border: 1px solid var(--border);
+  color: var(--text); font-family: var(--font-bd); font-size: 1.2rem;
+  padding: .8rem 1.2rem; cursor: pointer; text-align: left; line-height: 1.5;
+  transition: all .15s;
+}
+.puzzle-opt:hover:not(:disabled) { border-color: var(--amber); color: var(--amber); }
+.puzzle-opt.correct  { border-color: var(--correct); color: var(--correct); background: rgba(0,255,0,.07); }
+.puzzle-opt.incorrect{ border-color: var(--danger);  color: var(--danger);  background: rgba(255,0,0,.07); }
+.puzzle-opt:disabled { cursor: default; }
+#puzzle-feedback { font-size: 1.2rem; color: var(--muted); min-height: 1.5rem; }
+#puzzle-continue {
+  display: none; background: transparent; border: 2px solid var(--correct);
+  color: var(--correct); font-family: var(--font-hd); font-size: 0.45rem;
+  padding: .7rem 1.5rem; cursor: pointer; line-height: 2; transition: all .15s;
+}
+#puzzle-continue.show { display: block; }
+#puzzle-continue:hover { background: var(--correct); color: var(--bg); }
+
+/* ── Search overlay ── */
+#search-overlay {
+  display: none; position: fixed; inset: 0; z-index: 400;
+  background: rgba(5,5,5,.96); flex-direction: column;
+  align-items: center; padding: 4rem 2rem; gap: 1rem;
+}
+#search-overlay.active { display: flex; }
+#search-box {
+  width: 100%; max-width: 600px; display: flex; gap: 0;
+  border: 2px solid var(--green); background: transparent;
+}
+#search-prefix { padding: .7rem 1rem; color: var(--green); font-family: var(--font-bd); font-size: 1.3rem; border-right: 2px solid var(--green); }
+#search-input {
+  flex: 1; background: transparent; border: none; outline: none;
+  color: var(--text); font-family: var(--font-bd); font-size: 1.3rem;
+  padding: .7rem 1rem;
+}
+#search-results {
+  width: 100%; max-width: 600px; overflow-y: auto; max-height: 60vh;
+  display: flex; flex-direction: column; gap: .4rem;
+}
+.search-result {
+  background: var(--card-bg); border: 1px solid var(--border);
+  padding: .7rem 1rem; cursor: pointer; transition: all .15s;
+}
+.search-result:hover { border-color: var(--green); }
+.sr-title { color: var(--green); font-size: 1.1rem; }
+.sr-desc  { color: var(--muted); font-size: 1rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sr-ch    { color: var(--amber); font-size: 0.9rem; }
+.sr-none  { color: var(--muted); text-align: center; padding: 2rem; }
+
+/* ── Chapter sidebar ── */
+#chapter-sidebar {
+  display: none; position: fixed; right: 0; top: 0; bottom: 0;
+  width: 280px; z-index: 500; background: var(--dim);
+  border-left: 2px solid var(--border); flex-direction: column;
+  overflow-y: auto;
+}
+#chapter-sidebar.active { display: flex; }
+#sidebar-header {
+  padding: 1rem; border-bottom: 1px solid var(--border);
+  font-family: var(--font-hd); font-size: 0.45rem; color: var(--amber);
+  display: flex; justify-content: space-between; align-items: center; flex-shrink: 0;
+}
+#sidebar-close {
+  background: transparent; border: none; color: var(--muted);
+  cursor: pointer; font-size: 1.2rem; padding: .2rem .5rem;
+}
+#sidebar-close:hover { color: var(--danger); }
+.sidebar-ch {
+  padding: .7rem 1rem; cursor: pointer; border-bottom: 1px solid var(--border);
+  transition: all .15s;
+}
+.sidebar-ch:hover { background: var(--card-bg); }
+.sidebar-ch.active-ch { background: var(--green3); }
+.sidebar-ch-num   { font-family: var(--font-hd); font-size: 0.35rem; color: var(--amber); margin-bottom: .3rem; }
+.sidebar-ch-title { color: var(--green); font-size: 1.05rem; }
+.sidebar-ch-prog  { color: var(--muted); font-size: 0.9rem; margin-top: .2rem; }
+
+/* ── Toolbar ── */
+#toolbar {
+  display: flex; align-items: center; gap: .5rem;
+  padding: .4rem .8rem; border-top: 1px solid var(--border);
+  background: var(--dim); flex-shrink: 0;
+}
+.tool-btn {
+  background: transparent; border: 1px solid transparent;
+  color: var(--muted); font-family: var(--font-hd); font-size: 0.35rem;
+  padding: .35rem .7rem; cursor: pointer; line-height: 2;
+  transition: all .15s;
+}
+.tool-btn:hover { border-color: var(--border); color: var(--green); }
+#toolbar-title { flex: 1; font-family: var(--font-hd); font-size: 0.38rem; color: var(--green); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#toolbar-stats { color: var(--muted); font-size: 0.95rem; white-space: nowrap; }
+
+/* ── Touch hint ── */
+#touch-hint { display: none; }
+@media (pointer: coarse) { #touch-hint { display: block; } }
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar       { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--green3); }
+</style>
+</head>
+<body>
+<div id="screen">
+
+  <!-- Loading screen -->
+  <div id="loading">
+    <h1>TRAILMAKER</h1>
+    <p>Loading trail data<span class="blink">_</span></p>
+  </div>
+
+  <!-- Main app (hidden until loaded) -->
+  <div id="app">
+
+    <!-- Toolbar -->
+    <div id="toolbar">
+      <span id="toolbar-title"></span>
+      <span id="toolbar-stats"></span>
+      <button class="tool-btn" onclick="openSearch()" title="Search (/)">/ SEARCH</button>
+      <button class="tool-btn" onclick="toggleSidebar()" title="Chapters (C)">C CHAPTERS</button>
+    </div>
+
+    <!-- Trail map bar -->
+    <div id="map-bar">
+      <div id="map-scroll">
+        <div id="map-inner"></div>
+      </div>
+      <div id="wagon">🐂</div>
+    </div>
+
+    <!-- Progress bar -->
+    <div id="progress-bar"><div id="progress-fill"></div></div>
+
+    <!-- Main content -->
+    <div id="main-content">
+      <div id="insight-card">
+        <div class="card-meta">
+          <span class="card-chapter" id="card-ch-label"></span>
+          <span class="card-badge" id="card-badge" style="display:none"></span>
+          <span class="card-index" id="card-index"></span>
+        </div>
+        <div class="card-title" id="card-title"></div>
+        <div class="card-desc"  id="card-desc"></div>
+        <div class="card-learn" id="card-learn"></div>
+        <div class="card-file"  id="card-file"></div>
+        <button class="card-branch-btn" id="card-branch-btn" style="display:none" onclick="openBranch()"></button>
+      </div>
+      <div id="nav">
+        <button class="nav-btn" id="nav-prev" onclick="navigate(-1)">◀ PREV</button>
+        <span id="nav-pos"></span>
+        <button class="nav-btn" id="nav-next" onclick="navigate(1)">NEXT ▶</button>
+      </div>
+      <div id="touch-hint" style="color:var(--muted);font-size:.9rem;margin-top:.5rem;text-align:center">swipe to navigate</div>
+    </div>
+  </div>
+
+  <!-- Chapter interstitial -->
+  <div id="chapter-interstitial">
+    <div class="ch-label">ENTERING TERRITORY</div>
+    <div class="ch-divider"></div>
+    <div class="ch-num" id="ci-num"></div>
+    <div class="ch-title" id="ci-title"></div>
+    <div class="ch-desc" id="ci-desc"></div>
+    <button class="ch-continue" onclick="dismissInterstitial()">PRESS ANY KEY TO CONTINUE ▶</button>
+  </div>
+
+  <!-- Branch overlay -->
+  <div id="branch-overlay">
+    <div id="branch-header">
+      <div id="branch-title">BRANCH TRAIL</div>
+      <button id="branch-close" onclick="closeBranch()">✕ CLOSE</button>
+    </div>
+    <div id="branch-minimap"></div>
+    <div id="branch-content">
+      <div id="branch-card">
+        <div class="branch-level-badge" id="br-level"></div>
+        <div class="branch-card-title" id="br-title"></div>
+        <div class="branch-card-desc"  id="br-desc"></div>
+        <div class="branch-card-core"  id="br-core"></div>
+      </div>
+    </div>
+    <div id="branch-nav">
+      <button class="branch-nav-btn" id="br-prev" onclick="branchNavigate(-1)">◀ BACK</button>
+      <span id="branch-nav-pos"></span>
+      <button class="branch-nav-btn" id="br-next" onclick="branchNavigate(1)">DEEPER ▶</button>
+    </div>
+  </div>
+
+  <!-- Puzzle overlay -->
+  <div id="puzzle-overlay">
+    <div id="puzzle-label">⚠ PUZZLE GATE — ANSWER TO RETURN</div>
+    <div id="puzzle-q"></div>
+    <div id="puzzle-opts"></div>
+    <div id="puzzle-feedback"></div>
+    <button id="puzzle-continue" onclick="exitBranch()">RETURN TO TRAIL ▶</button>
+  </div>
+
+  <!-- Search overlay -->
+  <div id="search-overlay">
+    <div id="search-box">
+      <div id="search-prefix">SEARCH</div>
+      <input id="search-input" type="text" autocomplete="off" spellcheck="false"
+             placeholder="type to search insights..."
+             oninput="handleSearch(this.value)"
+             onkeydown="searchKeydown(event)">
+    </div>
+    <div id="search-results"></div>
+  </div>
+
+  <!-- Chapter sidebar -->
+  <div id="chapter-sidebar">
+    <div id="sidebar-header">
+      <span>CHAPTERS</span>
+      <button id="sidebar-close" onclick="toggleSidebar()">✕</button>
+    </div>
+    <div id="sidebar-list"></div>
+  </div>
+
+</div><!-- #screen -->
+
+<script>
+'use strict';
+
+// ── State ──────────────────────────────────────────────────────────────────
+let trail        = null;
+let idx          = 0;        // current insight index
+let visited      = new Set();
+let branchSolved = new Set(); // insight indices with solved puzzles
+
+// Branch state
+let inBranch     = false;
+let branchKey    = null;     // stringified insight index
+let branchStep   = 0;        // 0-2 (trail levels)
+let inPuzzle     = false;
+let puzzleActive = false;
+
+// UI state
+let sidebarOpen  = false;
+let searchOpen   = false;
+let interstitialPending = false;
+let lastChapterIdx = -1;     // chapter of previous insight
+
+// ── Init ───────────────────────────────────────────────────────────────────
+(async () => {
+  const params = new URLSearchParams(location.search);
+  const trailUrl = params.get('trail') || 'trail.json';
+  try {
+    const res = await fetch(trailUrl);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    trail = await res.json();
+  } catch (e) {
+    document.getElementById('loading').innerHTML =
+      `<h1 style="color:var(--danger)">LOAD ERROR</h1><p>${e.message}</p>` +
+      `<p style="color:var(--muted);font-size:.9rem">Serve this directory with:<br>python3 -m http.server 8000</p>`;
+    return;
+  }
+
+  loadProgress();
+  buildTrailMap();
+  buildSidebar();
+  document.getElementById('toolbar-title').textContent = trail.meta.title;
+  document.getElementById('toolbar-stats').textContent = trail.meta.stats || '';
+  document.title = trail.meta.title;
+
+  document.getElementById('loading').style.display = 'none';
+  document.getElementById('app').style.display = 'flex';
+
+  render();
+  setupKeyboard();
+  setupTouch();
+})();
+
+// ── Storage ────────────────────────────────────────────────────────────────
+function storageKey() {
+  const id = trail.meta.id || trail.meta.repo || 'trailmaker';
+  let h = 0;
+  for (let i = 0; i < id.length; i++) h = (Math.imul(31, h) + id.charCodeAt(i)) | 0;
+  return `tm_${Math.abs(h).toString(36)}`;
+}
+
+function saveProgress() {
+  try {
+    localStorage.setItem(storageKey(), JSON.stringify({
+      idx,
+      visited: [...visited],
+      branchSolved: [...branchSolved],
+    }));
+  } catch (_) {}
+}
+
+function loadProgress() {
+  try {
+    const raw = localStorage.getItem(storageKey());
+    if (!raw) return;
+    const s = JSON.parse(raw);
+    idx          = Math.min(s.idx || 0, trail.insights.length - 1);
+    visited      = new Set(s.visited || []);
+    branchSolved = new Set(s.branchSolved || []);
+  } catch (_) {}
+}
+
+// ── File links ─────────────────────────────────────────────────────────────
+function fileLink(f) {
+  if (!f) return '#';
+  const isGHPages = location.hostname.includes('github.io');
+  if (isGHPages && trail.meta.repo) {
+    const base = trail.meta.repo.replace(/\/$/, '');
+    const isDir = !f.split('/').pop().includes('.');
+    return `${base}/${isDir ? 'tree' : 'blob'}/main/${f}`;
+  }
+  return f;
+}
+
+// ── Trail map ──────────────────────────────────────────────────────────────
+let dotEls = [];   // map-dot elements indexed by insight index
+let dotPositions = []; // x offset of each dot center
+
+function buildTrailMap() {
+  const inner = document.getElementById('map-inner');
+  inner.innerHTML = '';
+  dotEls = [];
+  dotPositions = [];
+
+  const insights = trail.insights;
+  let prevChapter = -1;
+
+  insights.forEach((ins, i) => {
+    // Chapter marker
+    if (ins.ch !== prevChapter) {
+      prevChapter = ins.ch;
+      const ch = trail.chapters[ins.ch];
+      const marker = document.createElement('div');
+      marker.className = 'map-chapter';
+      marker.innerHTML = `<div class="map-chapter-flag">${ch ? ch.title : ''}</div><div class="map-chapter-post"></div>`;
+      inner.appendChild(marker);
+    }
+
+    // Segment before dot (skip first)
+    if (i > 0 || inner.children.length > 0) {
+      const seg = document.createElement('div');
+      seg.className = 'map-seg';
+      seg.id = `seg-${i}`;
+      inner.appendChild(seg);
+    }
+
+    // Dot
+    const dot = document.createElement('div');
+    dot.className = 'map-dot';
+    dot.id = `dot-${i}`;
+    dot.title = insights[i].t;
+    dot.addEventListener('click', () => jumpTo(i));
+    inner.appendChild(dot);
+    dotEls.push(dot);
+  });
+
+  // Measure dot positions after paint
+  requestAnimationFrame(measureDotPositions);
+}
+
+function measureDotPositions() {
+  const scroll = document.getElementById('map-scroll');
+  const scrollRect = scroll.getBoundingClientRect();
+  dotPositions = dotEls.map(el => {
+    const r = el.getBoundingClientRect();
+    return r.left - scrollRect.left + scroll.scrollLeft + r.width / 2;
+  });
+}
+
+function updateTrailMap() {
+  const insights = trail.insights;
+  insights.forEach((ins, i) => {
+    const dot = dotEls[i];
+    if (!dot) return;
+    const seg = document.getElementById(`seg-${i}`);
+    dot.className = 'map-dot' +
+      (i === idx ? ' current' : '') +
+      (visited.has(i) ? ' visited' : '') +
+      (trail.branches && trail.branches[String(i)] ? ' branched' : '');
+    if (seg) seg.className = 'map-seg' + (visited.has(i) ? ' visited' : '');
+  });
+
+  // Scroll wagon to current
+  if (dotPositions[idx] !== undefined) {
+    const scroll = document.getElementById('map-scroll');
+    const wagon  = document.getElementById('wagon');
+    const x = dotPositions[idx];
+    wagon.style.left = `${scroll.getBoundingClientRect().left + x - scroll.scrollLeft}px`;
+
+    // Center current dot in scroll
+    const scrollEl = document.getElementById('map-scroll');
+    const target = x - scrollEl.clientWidth / 2;
+    scrollEl.scrollLeft = Math.max(0, target);
+  }
+
+  // Progress bar
+  const pct = trail.insights.length > 1
+    ? (idx / (trail.insights.length - 1)) * 100
+    : 100;
+  document.getElementById('progress-fill').style.width = `${pct}%`;
+}
+
+// ── Render current insight card ────────────────────────────────────────────
+function render() {
+  if (!trail) return;
+  const ins = trail.insights[idx];
+  if (!ins) return;
+
+  visited.add(idx);
+  saveProgress();
+
+  const ch = trail.chapters[ins.ch] || {};
+  document.getElementById('card-ch-label').textContent = ch.title || '';
+  document.getElementById('card-title').textContent   = ins.t;
+  document.getElementById('card-desc').textContent    = ins.d;
+  document.getElementById('card-learn').innerHTML     = ins.l;
+  document.getElementById('card-index').textContent   = `${idx + 1} / ${trail.insights.length}`;
+  document.getElementById('nav-pos').textContent      = `${idx + 1} / ${trail.insights.length}`;
+
+  // Badge
+  const badge = document.getElementById('card-badge');
+  if (ins.v) { badge.textContent = ins.v; badge.style.display = ''; }
+  else        { badge.style.display = 'none'; }
+
+  // File link
+  const fileEl = document.getElementById('card-file');
+  const href   = fileLink(ins.f);
+  const isDir  = ins.f && !ins.f.split('/').pop().includes('.');
+  fileEl.innerHTML = ins.f
+    ? `<span class="card-file-icon">${isDir ? '📁' : '📄'}</span><a href="${href}" target="_blank" rel="noopener">${ins.f}</a>`
+    : '';
+
+  // Branch button
+  const brBtn = document.getElementById('card-branch-btn');
+  const bKey  = String(idx);
+  if (trail.branches && trail.branches[bKey]) {
+    brBtn.style.display = '';
+    const solved = branchSolved.has(idx);
+    brBtn.textContent  = solved ? '↪ REVISIT BRANCH' : '↪ EXPLORE BRANCH TRAIL';
+    brBtn.className = 'card-branch-btn' + (solved ? ' card-branch-done' : '');
+  } else {
+    brBtn.style.display = 'none';
+  }
+
+  // Nav buttons
+  document.getElementById('nav-prev').disabled = idx === 0;
+  document.getElementById('nav-next').disabled = idx === trail.insights.length - 1;
+
+  updateTrailMap();
+  updateSidebar();
+}
+
+// ── Navigation ─────────────────────────────────────────────────────────────
+function navigate(delta) {
+  if (inBranch || searchOpen || sidebarOpen) return;
+  const next = idx + delta;
+  if (next < 0 || next >= trail.insights.length) return;
+
+  if (delta > 0) {
+    // Check if we're crossing a chapter boundary
+    const curCh  = trail.insights[idx].ch;
+    const nextCh = trail.insights[next].ch;
+    if (nextCh !== curCh && !visited.has(next)) {
+      showInterstitial(next);
+      return;
+    }
+  }
+  idx = next;
+  render();
+}
+
+function jumpTo(i) {
+  if (i < 0 || i >= trail.insights.length) return;
+  idx = i;
+  render();
+}
+
+// ── Chapter interstitial ───────────────────────────────────────────────────
+let pendingIdx = -1;
+
+function showInterstitial(nextIdx) {
+  pendingIdx = nextIdx;
+  const ch = trail.chapters[trail.insights[nextIdx].ch] || {};
+  const chNum = trail.insights[nextIdx].ch + 1;
+  document.getElementById('ci-num').textContent   = `CHAPTER ${chNum}`;
+  document.getElementById('ci-title').textContent = ch.title || '';
+  document.getElementById('ci-desc').textContent  = ch.desc  || '';
+  document.getElementById('chapter-interstitial').classList.add('active');
+  interstitialPending = true;
+}
+
+function dismissInterstitial() {
+  document.getElementById('chapter-interstitial').classList.remove('active');
+  interstitialPending = false;
+  if (pendingIdx >= 0) {
+    idx = pendingIdx;
+    pendingIdx = -1;
+    render();
+  }
+}
+
+// ── Branch trail ───────────────────────────────────────────────────────────
+function openBranch() {
+  branchKey  = String(idx);
+  branchStep = 0;
+  inBranch   = true;
+  document.getElementById('branch-overlay').classList.add('active');
+  renderBranch();
+}
+
+function closeBranch() {
+  document.getElementById('branch-overlay').classList.remove('active');
+  document.getElementById('puzzle-overlay').classList.remove('active');
+  inBranch  = false;
+  inPuzzle  = false;
+  puzzleActive = false;
+}
+
+function renderBranch() {
+  const branch = trail.branches[branchKey];
+  if (!branch) return;
+
+  const step = branch.trail[branchStep];
+  document.getElementById('br-level').textContent = step.level;
+  document.getElementById('br-title').textContent = step.title;
+  document.getElementById('br-desc').textContent  = step.desc;
+  document.getElementById('br-core').textContent  = step.core;
+
+  // Title shows parent insight title
+  const ins = trail.insights[parseInt(branchKey, 10)];
+  document.getElementById('branch-title').textContent = ins ? `BRANCH: ${ins.t}` : 'BRANCH TRAIL';
+
+  // Mini-map
+  const mm = document.getElementById('branch-minimap');
+  mm.innerHTML = '';
+  branch.trail.forEach((s, i) => {
+    if (i > 0) {
+      const seg = document.createElement('div');
+      seg.className = 'bm-seg' + (i <= branchStep ? ' done' : '');
+      mm.appendChild(seg);
+    }
+    const node = document.createElement('div');
+    node.className = 'bm-node';
+    const dot = document.createElement('div');
+    dot.className = 'bm-dot' + (i === branchStep ? ' active' : i < branchStep ? ' done' : '');
+    const lbl = document.createElement('div');
+    lbl.className = 'bm-label';
+    lbl.textContent = s.level;
+    node.appendChild(dot);
+    node.appendChild(lbl);
+    mm.appendChild(node);
+  });
+
+  // Nav
+  document.getElementById('br-prev').disabled = branchStep === 0;
+  document.getElementById('branch-nav-pos').textContent =
+    `LEVEL ${branchStep + 1} / 3`;
+
+  const isLast = branchStep === branch.trail.length - 1;
+  const nextBtn = document.getElementById('br-next');
+  nextBtn.textContent  = isLast ? 'PUZZLE ▶' : 'DEEPER ▶';
+  nextBtn.disabled     = false;
+}
+
+function branchNavigate(delta) {
+  const branch = trail.branches[branchKey];
+  if (!branch) return;
+
+  if (delta > 0 && branchStep === branch.trail.length - 1) {
+    openPuzzle();
+    return;
+  }
+  const next = branchStep + delta;
+  if (next < 0 || next >= branch.trail.length) return;
+  branchStep = next;
+  renderBranch();
+}
+
+// ── Puzzle ─────────────────────────────────────────────────────────────────
+function openPuzzle() {
+  const branch = trail.branches[branchKey];
+  if (!branch || !branch.puzzle) return;
+  inPuzzle     = true;
+  puzzleActive = true;
+  const p = branch.puzzle;
+
+  document.getElementById('puzzle-q').textContent = p.q;
+  document.getElementById('puzzle-feedback').textContent = '';
+  document.getElementById('puzzle-continue').className = 'display:none';
+  document.getElementById('puzzle-continue').classList.remove('show');
+
+  const opts = document.getElementById('puzzle-opts');
+  opts.innerHTML = '';
+  p.opts.forEach((opt, i) => {
+    const btn = document.createElement('button');
+    btn.className = 'puzzle-opt';
+    btn.textContent = `${String.fromCharCode(65 + i)}. ${opt}`;
+    btn.addEventListener('click', () => checkAnswer(i, p.ans));
+    opts.appendChild(btn);
+  });
+
+  document.getElementById('puzzle-overlay').classList.add('active');
+}
+
+function checkAnswer(chosen, correct) {
+  const opts = document.querySelectorAll('.puzzle-opt');
+  opts.forEach(b => b.disabled = true);
+  opts[correct].classList.add('correct');
+
+  if (chosen === correct) {
+    opts[chosen].classList.add('correct');
+    document.getElementById('puzzle-feedback').textContent = '✓ Correct! Trail knowledge gained.';
+    branchSolved.add(parseInt(branchKey, 10));
+    saveProgress();
+    document.getElementById('puzzle-continue').classList.add('show');
+  } else {
+    opts[chosen].classList.add('incorrect');
+    document.getElementById('puzzle-feedback').textContent = '✗ Not quite — the correct answer is highlighted.';
+    // Allow retry
+    setTimeout(() => {
+      opts.forEach((b, i) => {
+        b.disabled = false;
+        b.classList.remove('correct', 'incorrect');
+      });
+      document.getElementById('puzzle-feedback').textContent = 'Try again.';
+    }, 2000);
+  }
+}
+
+function exitBranch() {
+  document.getElementById('puzzle-overlay').classList.remove('active');
+  document.getElementById('branch-overlay').classList.remove('active');
+  inBranch  = false;
+  inPuzzle  = false;
+  puzzleActive = false;
+  render(); // refresh branch button state
+}
+
+// ── Search ─────────────────────────────────────────────────────────────────
+function openSearch() {
+  searchOpen = true;
+  document.getElementById('search-overlay').classList.add('active');
+  const input = document.getElementById('search-input');
+  input.value = '';
+  input.focus();
+  renderSearchResults('');
+}
+
+function closeSearch() {
+  searchOpen = false;
+  document.getElementById('search-overlay').classList.remove('active');
+}
+
+function handleSearch(q) {
+  renderSearchResults(q.toLowerCase().trim());
+}
+
+function renderSearchResults(q) {
+  const el = document.getElementById('search-results');
+  const insights = trail.insights;
+  const matches = q
+    ? insights.filter((ins, i) => {
+        const ch = trail.chapters[ins.ch] || {};
+        return (ins.t + ins.d + ins.f + (ch.title || '')).toLowerCase().includes(q);
+      }).map((ins, _, __) => ({ ins, i: insights.indexOf(ins) }))
+    : insights.map((ins, i) => ({ ins, i })).slice(0, 20);
+
+  if (!matches.length) {
+    el.innerHTML = '<div class="sr-none">No results.</div>';
+    return;
+  }
+  el.innerHTML = '';
+  matches.slice(0, 40).forEach(({ ins, i }) => {
+    const ch = trail.chapters[ins.ch] || {};
+    const div = document.createElement('div');
+    div.className = 'search-result';
+    div.innerHTML =
+      `<div class="sr-ch">${ch.title || ''}</div>` +
+      `<div class="sr-title">${ins.t}</div>` +
+      `<div class="sr-desc">${ins.d}</div>`;
+    div.addEventListener('click', () => {
+      closeSearch();
+      jumpTo(i);
+    });
+    el.appendChild(div);
+  });
+}
+
+function searchKeydown(e) {
+  if (e.key === 'Escape') { closeSearch(); }
+  if (e.key === 'Enter') {
+    const first = document.querySelector('.search-result');
+    if (first) first.click();
+  }
+  if (e.key === 'ArrowDown') {
+    const results = [...document.querySelectorAll('.search-result')];
+    if (results.length) results[0].focus();
+  }
+}
+
+// ── Sidebar ────────────────────────────────────────────────────────────────
+function buildSidebar() {
+  const list = document.getElementById('sidebar-list');
+  list.innerHTML = '';
+  trail.chapters.forEach((ch, ci) => {
+    const firstInsight = trail.insights.findIndex(ins => ins.ch === ci);
+    const div = document.createElement('div');
+    div.className = 'sidebar-ch';
+    div.id = `sidebar-ch-${ci}`;
+    div.innerHTML =
+      `<div class="sidebar-ch-num">CHAPTER ${ci + 1}</div>` +
+      `<div class="sidebar-ch-title">${ch.title}</div>` +
+      `<div class="sidebar-ch-prog" id="sidebar-prog-${ci}"></div>`;
+    div.addEventListener('click', () => {
+      toggleSidebar();
+      if (firstInsight >= 0) jumpTo(firstInsight);
+    });
+    list.appendChild(div);
+  });
+}
+
+function updateSidebar() {
+  trail.chapters.forEach((_, ci) => {
+    const ins = trail.insights.filter(i => i.ch === ci);
+    const seen = ins.filter((ins2, j) => visited.has(trail.insights.indexOf(ins2))).length;
+    const prog = document.getElementById(`sidebar-prog-${ci}`);
+    if (prog) prog.textContent = `${seen} / ${ins.length} visited`;
+
+    const el = document.getElementById(`sidebar-ch-${ci}`);
+    if (el) {
+      const curCh = trail.insights[idx]?.ch;
+      el.className = 'sidebar-ch' + (ci === curCh ? ' active-ch' : '');
+    }
+  });
+}
+
+function toggleSidebar() {
+  sidebarOpen = !sidebarOpen;
+  document.getElementById('chapter-sidebar').classList.toggle('active', sidebarOpen);
+}
+
+// ── Keyboard ───────────────────────────────────────────────────────────────
+function setupKeyboard() {
+  document.addEventListener('keydown', e => {
+    // Don't capture when typing in search
+    if (e.target === document.getElementById('search-input')) return;
+
+    if (interstitialPending) {
+      if (e.key !== 'Tab') { dismissInterstitial(); return; }
+    }
+
+    if (inPuzzle) return;
+
+    if (inBranch) {
+      if (e.key === 'ArrowRight' || e.key === 'l') branchNavigate(1);
+      if (e.key === 'ArrowLeft'  || e.key === 'h') branchNavigate(-1);
+      if (e.key === 'Escape') closeBranch();
+      return;
+    }
+
+    if (searchOpen) {
+      if (e.key === 'Escape') closeSearch();
+      return;
+    }
+
+    if (sidebarOpen && e.key === 'Escape') { toggleSidebar(); return; }
+
+    switch (e.key) {
+      case 'ArrowRight': case 'l': case 'ArrowDown': case 'j':
+        navigate(1); break;
+      case 'ArrowLeft': case 'h': case 'ArrowUp': case 'k':
+        navigate(-1); break;
+      case '/':
+        e.preventDefault(); openSearch(); break;
+      case 'c': case 'C':
+        toggleSidebar(); break;
+      case 'b': case 'B': {
+        const bk = String(idx);
+        if (trail.branches && trail.branches[bk]) openBranch();
+        break;
+      }
+      case 'g': case 'G': {
+        const n = prompt('Jump to insight # (1–' + trail.insights.length + ')');
+        const i = parseInt(n, 10);
+        if (!isNaN(i) && i >= 1 && i <= trail.insights.length) jumpTo(i - 1);
+        break;
+      }
+      case '[': {
+        // Previous chapter start
+        const curCh = trail.insights[idx].ch;
+        const target = curCh - 1;
+        const fi = trail.insights.findIndex(ins => ins.ch === target);
+        if (fi >= 0) jumpTo(fi);
+        break;
+      }
+      case ']': {
+        // Next chapter start
+        const curCh = trail.insights[idx].ch;
+        const target = curCh + 1;
+        const fi = trail.insights.findIndex(ins => ins.ch === target);
+        if (fi >= 0) jumpTo(fi);
+        break;
+      }
+      case 'Escape':
+        if (sidebarOpen) toggleSidebar();
+        break;
+    }
+  });
+}
+
+// ── Touch ──────────────────────────────────────────────────────────────────
+function setupTouch() {
+  let startX = 0, startY = 0;
+  const mc = document.getElementById('main-content');
+  mc.addEventListener('touchstart', e => {
+    startX = e.touches[0].clientX;
+    startY = e.touches[0].clientY;
+  }, { passive: true });
+  mc.addEventListener('touchend', e => {
+    const dx = e.changedTouches[0].clientX - startX;
+    const dy = e.changedTouches[0].clientY - startY;
+    if (Math.abs(dx) < 40 || Math.abs(dy) > Math.abs(dx)) return;
+    if (inBranch) { branchNavigate(dx < 0 ? 1 : -1); return; }
+    navigate(dx < 0 ? 1 : -1);
+  }, { passive: true });
+}
+
+// ── Resize: re-measure dot positions ──────────────────────────────────────
+window.addEventListener('resize', () => {
+  requestAnimationFrame(measureDotPositions);
+  requestAnimationFrame(updateTrailMap);
+});
+</script>
+</body>
+</html>
