@@ -98,7 +98,7 @@ run_model() {
     fi
     codex --full-auto -q "$PROMPT" \
       --system-prompt "$(cat "$SYSTEM_PROMPT")" \
-      > "$TMP"
+      | tee "$TMP"
   else
     if ! command -v claude &>/dev/null; then
       echo "Error: 'claude' CLI not found."
@@ -108,7 +108,7 @@ run_model() {
     claude --print \
       --system-prompt "$SYSTEM_PROMPT" \
       "$PROMPT" \
-      > "$TMP"
+      | tee "$TMP"
   fi
 }
 
@@ -120,7 +120,7 @@ else
 fi
 
 echo ""
-echo "→ Model finished. Extracting JSON..."
+echo "→ Extracting JSON..."
 
 # ── Extract JSON from model output ────────────────────────────────────────
 node - "$TMP" "$OUTPUT" <<'NODE'
