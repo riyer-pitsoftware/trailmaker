@@ -1,73 +1,93 @@
 # Trailmaker
 
-Generate interactive, educational trails through any open-source codebase. Point it at a GitHub repo — Claude or Codex scans it, extracts insights, maps tech dependencies 3 levels deep, and produces a `trail.json`. A single-file HTML viewer renders it as an Oregon Trail-inspired experience.
+Generate interactive, educational trails through any codebase. Point it at a GitHub repo or a local directory — Claude or Codex scans it, extracts insights, maps tech dependencies 3 levels deep, and produces a `trail.json`. A single-file HTML viewer renders it as an Oregon Trail-inspired experience.
 
 ## Quickstart
 
 ```bash
-# Generate a trail for any GitHub repo
 ./generate.sh facebook/react
-
-# View it
 python3 -m http.server 8000
 open http://localhost:8000
 ```
 
-## How It Works
+## generate.sh
 
 ```
-generate.sh <org/repo>
-    └── claude --print --system-prompt generate-trail.md "Scan <repo>"
-            └── produces trail.json
-                    └── index.html renders it
+./generate.sh <source> [output]
 ```
 
-**Four generation phases:**
-1. **Recon** — tree, file counts, language stats, README, manifests
-2. **Chapter mapping** — 8–20 logical subsystems (not just directories)
-3. **Insight extraction** — magic numbers, security boundaries, clever algorithms, 5–15 per chapter, each backed by a real file path
-4. **Branch generation** — tech chain traced 3 levels deep (Sourced Tech → How It Works → Core CS concept) with a puzzle gate
-
-## Usage
+| Param | Required | Description |
+|---|---|---|
+| `source` | yes | What to scan. A GitHub `org/repo`, a full `https://` URL, or a local directory path. |
+| `output` | no | Where to write the trail file. Defaults to `trail.json` in the current directory. Useful when generating trails for multiple projects — give each one a distinct name. |
 
 ```bash
-# Remote GitHub repo (org/repo shorthand or full URL)
+# GitHub repo (shorthand)
 ./generate.sh facebook/react
-./generate.sh https://github.com/denoland/deno deno.json
 
-# Local directory (useful for private or offline repos)
-./generate.sh /path/to/local/repo
-./generate.sh ../my-project my-project.json
+# GitHub repo (full URL)
+./generate.sh https://github.com/denoland/deno
+
+# Local directory — for private or offline repos
+./generate.sh /path/to/cloned/repo
+
+# Custom output file — keeps trail.json from being overwritten
+./generate.sh golang/go go.json
+./generate.sh /path/to/my-project my-project.json
 
 # Use Codex instead of Claude
 MODEL=codex ./generate.sh facebook/react
 ```
 
-**Requires:** `claude` CLI ([install](https://claude.ai/code)) or `codex` CLI if using `MODEL=codex`.
+**Requires:** `claude` CLI ([install](https://claude.ai/code)) or `codex` CLI if `MODEL=codex`.
 
-> For repos that can't be fetched remotely, clone them locally first and point generate.sh at the directory.
+For repos that aren't publicly accessible, clone them locally first:
+
+```bash
+git clone <url> /tmp/my-repo
+./generate.sh /tmp/my-repo my-repo.json
+```
+
+## Viewing Trails
+
+```bash
+# Serve from the trailmaker directory
+python3 -m http.server 8000
+
+# Default — loads trail.json
+open http://localhost:8000
+
+# Custom output file
+open "http://localhost:8000?trail=go.json"
+```
+
+## How It Works
+
+```
+generate.sh <source> [output]
+    └── claude --print --system-prompt generate-trail.md "Scan <source>"
+            └── produces <output> (trail.json by default)
+                    └── index.html renders it in the browser
+```
+
+The model runs four phases:
+
+1. **Recon** — directory tree, file counts, language stats, README, manifests
+2. **Chapter mapping** — 8–20 logical subsystems (not just directories)
+3. **Insight extraction** — magic numbers, security boundaries, clever algorithms; 5–15 per chapter, each backed by a real file path
+4. **Branch generation** — tech chain traced 3 levels deep (Sourced Tech → How It Works → Core CS concept) with a puzzle gate
 
 ## Viewer Features
 
-- Trail map with dots, segments, chapter markers, and wagon position
+- Trail map with dots, segments, chapter markers, wagon position indicator
 - Card-based insight display with source file links (GitHub or local)
 - Branch trail overlay — 3-level tech deep-dive with mini map
-- Puzzle gate to return from branch to main trail
-- Chapter interstitials, search overlay (`/`), chapter nav sidebar (`C`)
-- Keyboard: arrows, `h/j/k/l`, `G` jump, `[` `]` chapter skip, `b` branch
+- Puzzle gate to return from a branch to the main trail
+- Chapter interstitials, search overlay, chapter nav sidebar
+- Keyboard: arrows, `h/j/k/l`, `G` jump, `[` `]` chapter skip, `b` branch, `/` search, `C` chapters
 - Touch swipe support
-- localStorage progress (namespaced per repo, survives refresh)
-- CRT scanline theme, Google Fonts (Press Start 2P + VT323)
-- No build step — hosts on GitHub Pages as-is
-
-## Multiple Trails
-
-The viewer supports a `?trail=` query param, so you can host one viewer for many trails:
-
-```
-http://localhost:8000?trail=react.json
-http://localhost:8000?trail=deno.json
-```
+- Progress saved to localStorage per repo (survives refresh)
+- CRT scanline theme — no build step, hosts on GitHub Pages as-is
 
 ## Validate a Trail
 
@@ -80,22 +100,22 @@ node validate.js trail.json
 ## File Structure
 
 ```
-generate.sh          ← run this to generate a trail
-generate-trail.md    ← system prompt for the model
-index.html           ← viewer (self-contained, no dependencies)
-trail.json           ← generated output (one per project)
-validate.js          ← validates trail.json against the schema
+generate.sh           ← entry point: scan a repo, produce a trail file
+generate-trail.md     ← system prompt that drives the model scan
+index.html            ← viewer (single self-contained file, no dependencies)
+validate.js           ← validates any trail file against the schema
 schema/
-  trail.schema.json  ← JSON Schema for trail.json
+  trail.schema.json   ← JSON Schema defining the trail.json format
+trail.json            ← example/default trail file (generated, not checked in)
 ```
 
 ## trail.json Format
 
 ```json
 {
-  "meta": { "title": "The React Trail", "subtitle": "...", "stats": "...", "repo": "https://github.com/...", "icon": "⚛️" },
+  "meta": { "title": "The React Trail", "subtitle": "...", "stats": "~300K lines · JavaScript", "repo": "https://github.com/...", "icon": "⚛️" },
   "chapters": [{ "id": "reconciler", "title": "Reconciler", "desc": "..." }],
-  "insights": [{ "ch": 0, "t": "Title", "d": "Finding", "f": "packages/react/src/...", "l": "<strong>Why it matters:</strong> ..." }],
+  "insights": [{ "ch": 0, "t": "Title", "d": "Specific finding with real numbers", "f": "packages/react/src/ReactFiber.js", "l": "<strong>Why it matters:</strong> ..." }],
   "branches": {
     "3": {
       "trail": [
