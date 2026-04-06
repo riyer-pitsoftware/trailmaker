@@ -9,12 +9,6 @@
 #
 # Model: defaults to claude. Override with MODEL env var:
 #   MODEL=codex ./generate.sh org/repo
-#
-# Examples:
-#   ./generate.sh facebook/react
-#   ./generate.sh /Users/me/code/my-project
-#   ./generate.sh ../some-repo some-repo.json
-#   MODEL=codex ./generate.sh golang/go
 
 set -euo pipefail
 
@@ -28,14 +22,8 @@ MODEL="${MODEL:-claude}"
 if [[ -z "$REPO" ]]; then
   echo "Usage: $0 <org/repo|local-path> [output.json]"
   echo ""
-  echo "Remote:"
-  echo "  $0 facebook/react"
-  echo "  $0 denoland/deno deno.json"
-  echo "  MODEL=codex $0 golang/go"
-  echo ""
-  echo "Local:"
-  echo "  $0 /path/to/repo"
-  echo "  $0 ../my-project my-project.json"
+  echo "Remote:  $0 facebook/react"
+  echo "Local:   $0 /path/to/repo"
   exit 1
 fi
 
@@ -51,7 +39,6 @@ REPO_URL=""
 DISPLAY_SOURCE=""
 
 if [[ "$REPO" = /* ]] || [[ "$REPO" = ./* ]] || [[ "$REPO" = ../* ]] || [[ -d "$REPO" ]]; then
-  # Local path
   if [[ ! -d "$REPO" ]]; then
     echo "Error: '$REPO' is not a directory."
     exit 1
@@ -60,18 +47,14 @@ if [[ "$REPO" = /* ]] || [[ "$REPO" = ./* ]] || [[ "$REPO" = ../* ]] || [[ -d "$
   LOCAL_PATH="$(cd "$REPO" && pwd)"
   DISPLAY_SOURCE="$LOCAL_PATH (local)"
 else
-  # Remote GitHub
-  if [[ "$REPO" =~ ^https?:// ]]; then
-    REPO_URL="$REPO"
-  else
-    REPO_URL="https://github.com/$REPO"
-  fi
+  [[ "$REPO" =~ ^https?:// ]] && REPO_URL="$REPO" || REPO_URL="https://github.com/$REPO"
   DISPLAY_SOURCE="$REPO_URL"
 fi
 
-# ── Temp file for raw model output ────────────────────────────────────────
+# ── Temp files ─────────────────────────────────────────────────────────────
 TMP=$(mktemp /tmp/trail-raw-XXXXXX.txt)
-trap 'rm -f "$TMP"' EXIT
+TMP2=$(mktemp /tmp/trail-fmt-XXXXXX.txt)
+trap 'rm -f "$TMP" "$TMP2"' EXIT
 
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "  TRAILMAKER GENERATOR"
@@ -82,98 +65,115 @@ echo "  Model  : $MODEL"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 
-# ── Build prompt ───────────────────────────────────────────────────────────
+# ── Build prompts ──────────────────────────────────────────────────────────
 if $IS_LOCAL; then
-  PROMPT="Scan the local repository at: $LOCAL_PATH"
+  PASS1_PROMPT="Scan the local repository at: $LOCAL_PATH"
 else
-  PROMPT="Scan $REPO_URL"
+  PASS1_PROMPT="Scan $REPO_URL"
 fi
 
-# ── Run model ─────────────────────────────────────────────────────────────
-run_model() {
-  if [[ "$MODEL" == "codex" ]]; then
-    if ! command -v codex &>/dev/null; then
-      echo "Error: 'codex' CLI not found. Install it or use MODEL=claude."
-      exit 1
-    fi
-    codex --full-auto -q "$PROMPT" \
-      --system-prompt "$(cat "$SYSTEM_PROMPT")" \
-      | tee "$TMP"
-  else
-    if ! command -v claude &>/dev/null; then
-      echo "Error: 'claude' CLI not found."
-      echo "Install: https://claude.ai/code"
-      exit 1
-    fi
-    claude --print \
-      --system-prompt "$SYSTEM_PROMPT" \
-      "$PROMPT" \
-      | tee "$TMP"
+# ── Claude runner ──────────────────────────────────────────────────────────
+run_claude() {
+  local system_prompt="$1"
+  local user_prompt="$2"
+  local out_file="$3"
+
+  if ! command -v claude &>/dev/null; then
+    echo "Error: 'claude' CLI not found. Install: https://claude.ai/code"
+    exit 1
   fi
+
+  claude --print \
+    --system-prompt "$system_prompt" \
+    "$user_prompt" \
+    | tee "$out_file"
 }
 
+# ── JSON extractor ─────────────────────────────────────────────────────────
+extract_json() {
+  local in_file="$1"
+  local out_file="$2"
+  node - "$in_file" "$out_file" <<'NODE'
+const fs = require('fs');
+const raw = fs.readFileSync(process.argv[2], 'utf8');
+const outPath = process.argv[3];
+
+// 1. ```json fence
+const m1 = raw.match(/```json\s*([\s\S]*?)```/);
+if (m1) { try { JSON.parse(m1[1].trim()); fs.writeFileSync(outPath, m1[1].trim() + '\n'); process.exit(0); } catch(_){} }
+
+// 2. bare ``` fence
+const m2 = raw.match(/```\s*(\{[\s\S]*?\})\s*```/);
+if (m2) { try { JSON.parse(m2[1].trim()); fs.writeFileSync(outPath, m2[1].trim() + '\n'); process.exit(0); } catch(_){} }
+
+// 3. largest { ... } span
+const s = raw.indexOf('{'), e = raw.lastIndexOf('}');
+if (s >= 0 && e > s) {
+  const c = raw.slice(s, e + 1).trim();
+  try { JSON.parse(c); fs.writeFileSync(outPath, c + '\n'); process.exit(0); } catch(_) {}
+}
+
+process.exit(1); // signal: no JSON found
+NODE
+}
+
+# ── Pass 1: analysis ───────────────────────────────────────────────────────
+echo "[ PASS 1 — Scanning repository ]"
+echo ""
+
 if $IS_LOCAL; then
-  # Run from within the repo so relative file paths resolve correctly
-  (cd "$LOCAL_PATH" && run_model)
+  (cd "$LOCAL_PATH" && run_claude "$SYSTEM_PROMPT" "$PASS1_PROMPT" "$TMP")
 else
-  run_model
+  run_claude "$SYSTEM_PROMPT" "$PASS1_PROMPT" "$TMP"
 fi
 
 echo ""
 echo "→ Extracting JSON..."
 
-# ── Extract JSON from model output ────────────────────────────────────────
-node - "$TMP" "$OUTPUT" <<'NODE'
-const fs = require('fs');
-const raw = fs.readFileSync(process.argv[2], 'utf8');
-const outPath = process.argv[3];
+if extract_json "$TMP" "$OUTPUT"; then
+  echo "→ JSON extracted from pass 1."
+else
+  # ── Pass 2: formatting ─────────────────────────────────────────────────
+  echo "→ Pass 1 produced analysis text. Running formatting pass..."
+  echo ""
+  echo "[ PASS 2 — Formatting as trail.json ]"
+  echo ""
 
-// 1. Try ```json ... ``` fence
-const fenceMatch = raw.match(/```json\s*([\s\S]*?)```/);
-if (fenceMatch) {
-  const candidate = fenceMatch[1].trim();
-  try {
-    JSON.parse(candidate);
-    fs.writeFileSync(outPath, candidate + '\n');
-    console.log('→ Extracted from JSON code block.');
-    process.exit(0);
-  } catch (_) {}
-}
+  SCHEMA=$(cat "$SCRIPT_DIR/schema/trail.schema.json")
+  ANALYSIS=$(cat "$TMP")
 
-// 2. Try bare ``` ... ``` fence containing JSON
-const bareFence = raw.match(/```\s*(\{[\s\S]*?\})\s*```/);
-if (bareFence) {
-  const candidate = bareFence[1].trim();
-  try {
-    JSON.parse(candidate);
-    fs.writeFileSync(outPath, candidate + '\n');
-    console.log('→ Extracted from code block.');
-    process.exit(0);
-  } catch (_) {}
-}
+  PASS2_SYSTEM="You are a JSON formatter. Convert codebase analysis into a trail.json object.
+Output ONLY a raw JSON object — no markdown, no code fences, no explanation. Start with { and end with }.
 
-// 3. Try largest { ... } span in the output
-const start = raw.indexOf('{');
-const end   = raw.lastIndexOf('}');
-if (start >= 0 && end > start) {
-  const candidate = raw.slice(start, end + 1).trim();
-  try {
-    JSON.parse(candidate);
-    fs.writeFileSync(outPath, candidate + '\n');
-    console.log('→ Extracted bare JSON object.');
-    process.exit(0);
-  } catch (e) {
-    console.error('Error: Found JSON-like content but it does not parse:');
-    console.error('  ' + e.message);
-    console.error('Raw output saved to: ' + process.argv[2]);
-    process.exit(1);
-  }
-}
+The JSON must conform to this schema:
+$SCHEMA
 
-console.error('Error: No JSON object found in model output.');
-console.error('Raw output saved to: ' + process.argv[2]);
-process.exit(1);
-NODE
+Rules:
+- insights[].ch is the 0-based index into chapters[]
+- branches keys are stringified insight indices (\"0\", \"3\", etc.)
+- branch trail arrays must have exactly 3 items with levels in order: \"Sourced Tech\", \"How It Works\", \"Core Tech\"
+- puzzle opts must have exactly 4 strings, ans is 0-3
+- insights[].f must be a real path relative to the repo root (no leading slash)"
+
+  PASS2_PROMPT="Convert this codebase analysis into a trail.json object:
+
+$ANALYSIS"
+
+  run_claude "$PASS2_SYSTEM" "$PASS2_PROMPT" "$TMP2"
+
+  echo ""
+  echo "→ Extracting JSON from pass 2..."
+
+  if ! extract_json "$TMP2" "$OUTPUT"; then
+    echo ""
+    echo "Error: Could not extract JSON from either pass."
+    echo "Raw pass 1 saved to: $TMP"
+    echo "Raw pass 2 saved to: $TMP2"
+    # prevent trap from deleting them
+    TMP=/dev/null; TMP2=/dev/null
+    exit 1
+  fi
+fi
 
 # ── Validate ───────────────────────────────────────────────────────────────
 echo ""
