@@ -1,17 +1,19 @@
 #!/usr/bin/env bash
-# generate.sh — Generate trail.json for any GitHub repo using Claude or Codex
+# generate.sh — Generate trail.json for any GitHub repo or local directory
 #
 # Usage:
-#   ./generate.sh <org/repo>                    # writes trail.json
-#   ./generate.sh <org/repo> react.json         # custom output path
+#   ./generate.sh <org/repo>                    # remote GitHub repo
 #   ./generate.sh https://github.com/org/repo   # full URL also works
+#   ./generate.sh /path/to/local/repo           # local directory
+#   ./generate.sh ./my-project output.json      # custom output path
 #
 # Model: defaults to claude. Override with MODEL env var:
 #   MODEL=codex ./generate.sh org/repo
 #
 # Examples:
 #   ./generate.sh facebook/react
-#   ./generate.sh denoland/deno deno.json
+#   ./generate.sh /Users/me/code/my-project
+#   ./generate.sh ../some-repo some-repo.json
 #   MODEL=codex ./generate.sh golang/go
 
 set -euo pipefail
@@ -24,12 +26,16 @@ MODEL="${MODEL:-claude}"
 
 # ── Validate args ──────────────────────────────────────────────────────────
 if [[ -z "$REPO" ]]; then
-  echo "Usage: $0 <org/repo> [output.json]"
+  echo "Usage: $0 <org/repo|local-path> [output.json]"
   echo ""
-  echo "Examples:"
+  echo "Remote:"
   echo "  $0 facebook/react"
   echo "  $0 denoland/deno deno.json"
   echo "  MODEL=codex $0 golang/go"
+  echo ""
+  echo "Local:"
+  echo "  $0 /path/to/repo"
+  echo "  $0 ../my-project my-project.json"
   exit 1
 fi
 
@@ -38,11 +44,29 @@ if [[ ! -f "$SYSTEM_PROMPT" ]]; then
   exit 1
 fi
 
-# Normalize to full GitHub URL
-if [[ "$REPO" =~ ^https?:// ]]; then
-  REPO_URL="$REPO"
+# ── Detect local vs remote ─────────────────────────────────────────────────
+IS_LOCAL=false
+LOCAL_PATH=""
+REPO_URL=""
+DISPLAY_SOURCE=""
+
+if [[ "$REPO" = /* ]] || [[ "$REPO" = ./* ]] || [[ "$REPO" = ../* ]] || [[ -d "$REPO" ]]; then
+  # Local path
+  if [[ ! -d "$REPO" ]]; then
+    echo "Error: '$REPO' is not a directory."
+    exit 1
+  fi
+  IS_LOCAL=true
+  LOCAL_PATH="$(cd "$REPO" && pwd)"
+  DISPLAY_SOURCE="$LOCAL_PATH (local)"
 else
-  REPO_URL="https://github.com/$REPO"
+  # Remote GitHub
+  if [[ "$REPO" =~ ^https?:// ]]; then
+    REPO_URL="$REPO"
+  else
+    REPO_URL="https://github.com/$REPO"
+  fi
+  DISPLAY_SOURCE="$REPO_URL"
 fi
 
 # ── Temp file for raw model output ────────────────────────────────────────
@@ -52,36 +76,47 @@ trap 'rm -f "$TMP"' EXIT
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "  TRAILMAKER GENERATOR"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "  Repo   : $REPO_URL"
+echo "  Source : $DISPLAY_SOURCE"
 echo "  Output : $OUTPUT"
 echo "  Model  : $MODEL"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 
-# ── Run model ─────────────────────────────────────────────────────────────
-PROMPT="Scan $REPO_URL"
-
-if [[ "$MODEL" == "codex" ]]; then
-  # OpenAI Codex / codex CLI
-  if ! command -v codex &>/dev/null; then
-    echo "Error: 'codex' CLI not found. Install it or use MODEL=claude."
-    exit 1
-  fi
-  codex --full-auto -q "$PROMPT" \
-    --system-prompt "$(cat "$SYSTEM_PROMPT")" \
-    > "$TMP"
-
+# ── Build prompt ───────────────────────────────────────────────────────────
+if $IS_LOCAL; then
+  PROMPT="Scan the local repository at: $LOCAL_PATH"
 else
-  # Claude CLI (default)
-  if ! command -v claude &>/dev/null; then
-    echo "Error: 'claude' CLI not found."
-    echo "Install: https://claude.ai/code"
-    exit 1
+  PROMPT="Scan $REPO_URL"
+fi
+
+# ── Run model ─────────────────────────────────────────────────────────────
+run_model() {
+  if [[ "$MODEL" == "codex" ]]; then
+    if ! command -v codex &>/dev/null; then
+      echo "Error: 'codex' CLI not found. Install it or use MODEL=claude."
+      exit 1
+    fi
+    codex --full-auto -q "$PROMPT" \
+      --system-prompt "$(cat "$SYSTEM_PROMPT")" \
+      > "$TMP"
+  else
+    if ! command -v claude &>/dev/null; then
+      echo "Error: 'claude' CLI not found."
+      echo "Install: https://claude.ai/code"
+      exit 1
+    fi
+    claude --print \
+      --system-prompt "$SYSTEM_PROMPT" \
+      "$PROMPT" \
+      > "$TMP"
   fi
-  claude --print \
-    --system-prompt "$SYSTEM_PROMPT" \
-    "$PROMPT" \
-    > "$TMP"
+}
+
+if $IS_LOCAL; then
+  # Run from within the repo so relative file paths resolve correctly
+  (cd "$LOCAL_PATH" && run_model)
+else
+  run_model
 fi
 
 echo ""
@@ -148,10 +183,12 @@ echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "  Trail written to: $OUTPUT"
 echo ""
-echo "  View it:"
+echo "  View it (from the trailmaker directory):"
 echo "    python3 -m http.server 8000"
 echo "    open http://localhost:8000"
-echo ""
-echo "  Or with a custom trail path:"
-echo "    open http://localhost:8000?trail=$OUTPUT"
+if [[ "$OUTPUT" != "trail.json" ]]; then
+  echo ""
+  echo "  Custom trail path:"
+  echo "    open \"http://localhost:8000?trail=$OUTPUT\""
+fi
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

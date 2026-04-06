@@ -31,18 +31,21 @@ generate.sh <org/repo>
 ## Usage
 
 ```bash
-# Default: writes trail.json, uses claude CLI
-./generate.sh <org/repo>
-./generate.sh <org/repo> <output.json>      # custom output path
+# Remote GitHub repo (org/repo shorthand or full URL)
+./generate.sh facebook/react
+./generate.sh https://github.com/denoland/deno deno.json
+
+# Local directory (useful for private or offline repos)
+./generate.sh /path/to/local/repo
+./generate.sh ../my-project my-project.json
 
 # Use Codex instead of Claude
-MODEL=codex ./generate.sh <org/repo>
-
-# Full URL also works
-./generate.sh https://github.com/denoland/deno
+MODEL=codex ./generate.sh facebook/react
 ```
 
 **Requires:** `claude` CLI ([install](https://claude.ai/code)) or `codex` CLI if using `MODEL=codex`.
+
+> For repos that can't be fetched remotely, clone them locally first and point generate.sh at the directory.
 
 ## Viewer Features
 
