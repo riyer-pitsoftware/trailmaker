@@ -54,7 +54,8 @@ fi
 # ── Temp files ─────────────────────────────────────────────────────────────
 TMP=$(mktemp /tmp/trail-raw-XXXXXX.txt)
 TMP2=$(mktemp /tmp/trail-fmt-XXXXXX.txt)
-trap 'rm -f "$TMP" "$TMP2"' EXIT
+TMP_SYS=$(mktemp /tmp/trail-sys-XXXXXX.md)
+trap 'rm -f "$TMP" "$TMP2" "$TMP_SYS"' EXIT
 
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "  TRAILMAKER GENERATOR"
@@ -139,27 +140,25 @@ else
   echo "[ PASS 2 — Formatting as trail.json ]"
   echo ""
 
-  SCHEMA=$(cat "$SCRIPT_DIR/schema/trail.schema.json")
-  ANALYSIS=$(cat "$TMP")
+  # Write pass 2 system prompt to a file (avoids inline text issues with --system-prompt)
+  cat > "$TMP_SYS" <<SYSEOF
+You are a JSON formatter. Your only job is to convert a codebase analysis into a trail.json object.
 
-  PASS2_SYSTEM="You are a JSON formatter. Convert codebase analysis into a trail.json object.
-Output ONLY a raw JSON object — no markdown, no code fences, no explanation. Start with { and end with }.
+Output ONLY a raw JSON object. Start your response with { and end with }. No markdown, no code fences, no explanation, no preamble.
 
-The JSON must conform to this schema:
-$SCHEMA
+Rules for the JSON:
+- meta: title, subtitle, stats, repo (URL string), icon (emoji)
+- chapters[]: id (lowercase-slug), title, desc
+- insights[]: ch (0-based chapter index), t, d, f (path relative to repo root, no leading slash), l (HTML string starting with <strong>Why it matters:</strong>), optional v
+- branches{}: keys are stringified insight indices ("0", "3", etc.)
+  - trail: exactly 3 items, levels must be exactly "Sourced Tech", "How It Works", "Core Tech" in that order
+  - puzzle: q, opts (exactly 4 strings), ans (integer 0-3)
+SYSEOF
 
-Rules:
-- insights[].ch is the 0-based index into chapters[]
-- branches keys are stringified insight indices (\"0\", \"3\", etc.)
-- branch trail arrays must have exactly 3 items with levels in order: \"Sourced Tech\", \"How It Works\", \"Core Tech\"
-- puzzle opts must have exactly 4 strings, ans is 0-3
-- insights[].f must be a real path relative to the repo root (no leading slash)"
+  # Pass the analysis as a file path so claude can read it — avoids huge CLI arg
+  PASS2_PROMPT="Read the codebase analysis in the file $TMP and convert it into a trail.json object. Output only the JSON."
 
-  PASS2_PROMPT="Convert this codebase analysis into a trail.json object:
-
-$ANALYSIS"
-
-  run_claude "$PASS2_SYSTEM" "$PASS2_PROMPT" "$TMP2"
+  run_claude "$TMP_SYS" "$PASS2_PROMPT" "$TMP2"
 
   echo ""
   echo "→ Extracting JSON from pass 2..."
